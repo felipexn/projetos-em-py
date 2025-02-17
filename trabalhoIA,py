@@ -1,0 +1,94 @@
+import pandas as pd
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from sklearn.model_selection import LeaveOneOut
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix
+import random
+import matplotlib.pyplot as plt
+
+# Seed para reprodutibilidade
+np.random.seed(42)
+tf.random.set_seed(42)
+random.seed(42)
+
+# Carregar os dados (substitua 'dados.csv' pelo seu arquivo real)
+df = pd.read_csv('dados.csv')  # Deve ter colunas: 'luz_bloqueada' e 'altura_capim'
+
+# Definir a classificação da pastagem
+def classificar_pastagem(luz, altura):
+    if luz >= 95 and altura >= 70:
+        return 0  # Ótima
+    elif 70 <= luz < 95 and 50 <= altura < 70:
+        return 1  # Boa
+    elif 40 <= luz < 70 and 36 <= altura < 50:
+        return 2  # Regular
+    elif 20 <= luz < 40 and 30 <= altura < 36:
+        return 3  # Ruim
+    else:
+        return 4  # Muito Ruim
+
+# Aplicar classificação
+df['classe'] = df.apply(lambda row: classificar_pastagem(row['luz_bloqueada'], row['altura_capim']), axis=1)
+
+# Separar entradas e saídas
+X = df[['luz_bloqueada', 'altura_capim']].values
+y = keras.utils.to_categorical(df['classe'].values, num_classes=5)  # One-hot encoding
+
+# Normalizar os dados
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+
+# Definir o modelo MLP mais complexo
+def criar_modelo():
+    model = keras.Sequential([
+        keras.layers.Dense(64, activation='relu', input_shape=(2,)),
+        keras.layers.Dense(32, activation='relu'),
+        keras.layers.Dense(5, activation='softmax')
+    ])
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+# Callback para Early Stopping
+early_stopping = keras.callbacks.EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
+
+# Validação Leave-One-Out
+loo = LeaveOneOut()
+acuracias = []
+f1_scores = []
+matrizes_confusao = []
+
+for train_index, test_index in loo.split(X):
+    X_train, X_test = X[train_index], X[test_index]
+    y_train, y_test = y[train_index], y[test_index]
+    
+    modelo = criar_modelo()
+    history = modelo.fit(X_train, y_train, epochs=100, verbose=0, callbacks=[early_stopping])
+    
+    y_pred = modelo.predict(X_test)
+    y_pred_classes = np.argmax(y_pred, axis=1)
+    y_test_classes = np.argmax(y_test, axis=1)
+    
+    acuracias.append(accuracy_score(y_test_classes, y_pred_classes))
+    f1_scores.append(f1_score(y_test_classes, y_pred_classes, average='macro'))
+    matrizes_confusao.append(confusion_matrix(y_test_classes, y_pred_classes))
+
+# Resultados finais
+print(f'Acurácia Média: {np.mean(acuracias):.3f}')
+print(f'F1-Score Médio: {np.mean(f1_scores):.3f}')
+
+# Relatório de Classificação Final
+print('Relatório de Classificação:')
+y_true_final = np.argmax(y, axis=1)
+y_pred_final = np.argmax(modelo.predict(X), axis=1)
+print(classification_report(y_true_final, y_pred_final))
+
+# Visualização do Desempenho
+plt.plot(history.history['accuracy'], label='Acurácia')
+plt.plot(history.history['loss'], label='Perda')
+plt.xlabel('Épocas')
+plt.ylabel('Métrica')
+plt.legend()
+plt.title('Desempenho do Modelo')
+plt.show()
